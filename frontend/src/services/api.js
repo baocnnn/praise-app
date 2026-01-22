@@ -2,7 +2,7 @@ import axios from 'axios';
 import { authService } from './auth';
 
 // Base URL for your backend API
-const API_URL = 'http://127.0.0.1:8000';
+const API_URL = 'https://praise-app-production.up.railway.app';
 
 // Create axios instance with default config
 const api = axios.create({
