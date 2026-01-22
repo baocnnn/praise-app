@@ -11,7 +11,25 @@ import { authService } from './services/auth';
 
 function App() {
   const isAuthenticated = authService.isAuthenticated();
+   useEffect(() => {
+    const checkAuth = () => {
+      setIsAuthenticated(authService.isAuthenticated());
+    };
 
+    // Check on mount
+    checkAuth();
+
+    // Listen for storage changes (when token is added/removed)
+    window.addEventListener('storage', checkAuth);
+    
+    // Also check periodically (for same-tab updates)
+    const interval = setInterval(checkAuth, 1000);
+
+    return () => {
+      window.removeEventListener('storage', checkAuth);
+      clearInterval(interval);
+    };
+  }, []);
   return (
     <Router>
       {isAuthenticated && <Navbar />}
