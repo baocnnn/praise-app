@@ -1,8 +1,11 @@
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { authService } from '../services/auth';
+import './Navbar.css';
 
 function Navbar() {
   const navigate = useNavigate();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const handleLogout = () => {
     authService.removeToken();
@@ -10,62 +13,50 @@ function Navbar() {
   };
 
   return (
-    <nav style={styles.nav}>
-      <div style={styles.container}>
-        <h2 style={styles.logo}>Apex Kudos</h2>
+    <nav className="navbar">
+      <div className="navbar-container">
+        <h2 className="navbar-logo">Praise App</h2>
         
-        <div style={styles.links}>
-          <Link to="/dashboard" style={styles.link}>Dashboard</Link>
-          <Link to="/give-praise" style={styles.link}>Give Praise</Link>
-          <Link to="/my-profile" style={styles.link}>My Profile</Link>
-          <Link to="/rewards" style={styles.link}>Rewards</Link>
-          <Link to="/admin" style={styles.link}Admin></Link>
-          <button onClick={handleLogout} style={styles.logoutButton}>
+        <button className="hamburger" onClick={() => setMenuOpen(!menuOpen)}>
+          ☰
+        </button>
+
+        <div className="desktop-links">
+          <Link to="/dashboard" className="nav-link">Dashboard</Link>
+          <Link to="/give-praise" className="nav-link">Give Praise</Link>
+          <Link to="/my-profile" className="nav-link">My Profile</Link>
+          <Link to="/rewards" className="nav-link">Rewards</Link>
+          <Link to="/admin" className="nav-link">Admin</Link>
+          <button onClick={handleLogout} className="logout-button">
             Logout
           </button>
         </div>
+
+        {menuOpen && (
+          <div className="mobile-menu">
+            <Link to="/dashboard" className="mobile-link" onClick={() => setMenuOpen(false)}>
+              Dashboard
+            </Link>
+            <Link to="/give-praise" className="mobile-link" onClick={() => setMenuOpen(false)}>
+              Give Praise
+            </Link>
+            <Link to="/my-profile" className="mobile-link" onClick={() => setMenuOpen(false)}>
+              My Profile
+            </Link>
+            <Link to="/rewards" className="mobile-link" onClick={() => setMenuOpen(false)}>
+              Rewards
+            </Link>
+            <Link to="/admin" className="mobile-link" onClick={() => setMenuOpen(false)}>
+              Admin
+            </Link>
+            <button onClick={handleLogout} className="logout-button" style={{width: '100%', marginTop: '10px'}}>
+              Logout
+            </button>
+          </div>
+        )}
       </div>
     </nav>
   );
 }
-
-const styles = {
-  nav: {
-    backgroundColor: '#007bff',
-    padding: '15px 0',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-  },
-  container: {
-    maxWidth: '1200px',
-    margin: '0 auto',
-    padding: '0 20px',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  logo: {
-    color: 'white',
-    margin: 0,
-  },
-  links: {
-    display: 'flex',
-    gap: '20px',
-    alignItems: 'center',
-  },
-  link: {
-    color: 'white',
-    textDecoration: 'none',
-    fontSize: '16px',
-  },
-  logoutButton: {
-    backgroundColor: '#dc3545',
-    color: 'white',
-    border: 'none',
-    padding: '8px 16px',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    fontSize: '14px',
-  },
-};
 
 export default Navbar;

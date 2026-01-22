@@ -33,6 +33,13 @@ function MyProfile() {
       </div>
     );
   }
+  if (!user) {
+    return (
+        <div style={styles.container}>
+            <h1>Error loading profile</h1>
+        </div>
+    );
+  }
 
   return (
     <div style={styles.container}>
