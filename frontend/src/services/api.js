@@ -70,5 +70,35 @@ export const apiService = {
 
   getMyRedemptions() {
     return api.get('/my-redemptions');
+  },
+  // Admin
+  getAllUsers() {
+    return api.get('/users');
+  },
+
+  createCoreValue(name, description) {
+    return api.post('/admin/core-values', null, {
+      params: { name, description }
+    });
+  },
+
+  deleteCoreValue(coreValueId) {
+    return api.delete(`/admin/core-values/${coreValueId}`);
+  },
+
+  createReward(rewardData) {
+    return api.post('/admin/rewards', rewardData);
+  },
+
+  deleteReward(rewardId) {
+    return api.delete(`/admin/rewards/${rewardId}`);
+  },
+
+  getAllRedemptions() {
+    return api.get('/admin/redemptions');
+  },
+
+  fulfillRedemption(redemptionId) {
+    return api.patch(`/admin/redemptions/${redemptionId}/fulfill`);
   }
 };

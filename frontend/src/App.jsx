@@ -6,6 +6,7 @@ import MyProfile from './pages/MyProfile';
 import Rewards from './pages/Rewards';
 import ProtectedRoute from './components/ProtectedRoute';
 import Navbar from './components/Navbar';
+import Admin from './pages/Admin';
 import { authService } from './services/auth';
 
 function App() {
@@ -49,6 +50,14 @@ function App() {
           element={
             <ProtectedRoute>
               <Rewards />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin"
+          element={
+            <ProtectedRoute>
+              <Admin />
             </ProtectedRoute>
           }
         />

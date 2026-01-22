@@ -19,6 +19,7 @@ function Navbar() {
           <Link to="/give-praise" style={styles.link}>Give Praise</Link>
           <Link to="/my-profile" style={styles.link}>My Profile</Link>
           <Link to="/rewards" style={styles.link}>Rewards</Link>
+          <Link to="/admin" style={styles.link}Admin></Link>
           <button onClick={handleLogout} style={styles.logoutButton}>
             Logout
           </button>
