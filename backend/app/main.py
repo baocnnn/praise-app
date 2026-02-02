@@ -343,7 +343,13 @@ def admin_get_all_redemptions(
     current_user: models.User = Depends(auth.get_current_user)
 ):
     """Get all redemptions (admin)"""
-    redemptions = db.query(models.Redemption).order_by(models.Redemption.redeemed_at.desc()).all()
+    from sqlalchemy.orm import joinedload
+    
+    redemptions = db.query(models.Redemption).options(
+        joinedload(models.Redemption.reward),
+        joinedload(models.Redemption.user)
+    ).order_by(models.Redemption.redeemed_at.desc()).all()
+    
     return redemptions
 # ============== TEST ENDPOINT ==============
 
