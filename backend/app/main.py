@@ -97,6 +97,22 @@ def token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 def get_me(current_user: models.User = Depends(auth.get_current_user)):
     """Get current logged-in user info"""
     return current_user
+
+@app.patch("/me/link-slack")
+def link_slack_account(
+    slack_id: str,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Link Slack account to user"""
+    # Check if slack_id is already used
+    existing = db.query(models.User).filter(models.User.slack_id == slack_id).first()
+    if existing and existing.id != current_user.id:
+        raise HTTPException(status_code=400, detail="This Slack account is already linked")
+    
+    current_user.slack_id = slack_id
+    db.commit()
+    return {"message": "Slack account linked successfully"}
 # ============== CORE VALUES ENDPOINTS ==============
 
 @app.post("/core-values")
