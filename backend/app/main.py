@@ -30,17 +30,6 @@ app.add_middleware(
 )
 app.include_router(slack_router)
 # ============== AUTHENTICATION ENDPOINTS ==============
-@app.post("/admin/migrate-slack-id")
-def migrate_slack_id(db: Session = Depends(get_db)):
-    """One-time migration to add slack_id column"""
-    from sqlalchemy import text
-    try:
-        db.execute(text("ALTER TABLE users ADD COLUMN slack_id VARCHAR UNIQUE"))
-        db.execute(text("CREATE INDEX idx_users_slack_id ON users(slack_id)"))
-        db.commit()
-        return {"message": "Migration successful!"}
-    except Exception as e:
-        return {"error": str(e)}
     
 @app.post("/register", response_model=schemas.UserResponse)
 def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
