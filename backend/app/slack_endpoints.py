@@ -51,35 +51,59 @@ async def slack_praise_command(request: Request, db: Session = Depends(get_db)):
             "text": "❌ You need to link your Slack account first. Please register on the web app and we'll connect your account."
         }
     
+    available_values = db.query(models.CoreValue).all()
+    values_list = " or ".join([f"`{cv.name}`" for cv in available_values])
     # Parse the command text
     # Expected format: @username "message" #core-value
     
     # Extract message between quotes
-    if '"' not in text:
+    if not text.startswith("@"):
         return {
             "response_type": "ephemeral",
-            "text": "❌ Please put your message in quotes. Usage: `/praise @user \"Your message\" #core-value`"
+            "text": f"❌ Please start with @username\n\nExample: `/praise @User Great job today! #above`\n\nCore values: {values_list}"
         }
-    
-    parts = text.split('"')
-    if len(parts) < 3:
+    parts = text.split(None, 1)  # Split on first space
+    if len(parts) < 2:
         return {
             "response_type": "ephemeral",
-            "text": "❌ Invalid format. Usage: `/praise @user \"Your message\" #core-value`"
+            "text": f"❌ Please include a message\n\nExample: `/praise @julie.tellesc Great job! #above`"
         }
     
-    username_part = parts[0].strip()  # @username
-    message = parts[1]  # The message
-    core_value_text = parts[2].strip()  # #core-value
+    username = parts[0][1:]  # Remove @
+    rest_of_text = parts[1]
     
-    # Extract username (remove @)
-    if not username_part.startswith("@"):
+    # Find core value (look for # anywhere in the message)
+    core_value = None
+    message = rest_of_text
+    
+    if "#" in rest_of_text:
+        # Split on last # to get the core value
+        message_part, value_part = rest_of_text.rsplit("#", 1)
+        message = message_part.strip()
+        value_text = value_part.strip().lower().replace(" ", "")
+        
+        # Fuzzy match core values (ignore spaces and case)
+        for cv in available_values:
+            cv_normalized = cv.name.lower().replace(" ", "")
+            # Match if the search term is in the core value name
+            if value_text in cv_normalized or cv_normalized.startswith(value_text):
+                core_value = cv
+                break
+    
+    if not core_value:
         return {
             "response_type": "ephemeral",
-            "text": "❌ Please mention a user with @username"
+            "text": f"❌ Please include a core value with #\n\nExample: `/praise @julie.tellesc Great job! #above`\n\nCore values: {values_list}"
         }
     
-    username = username_part[1:]  # Remove @
+    if not message or len(message.strip()) < 3:
+        return {
+            "response_type": "ephemeral",
+            "text": "❌ Please include a message about why you're giving praise"
+        }
+    
+    # Clean up message (remove quotes if present)
+    message = message.strip().strip('"').strip("'")
     
     # Look up Slack user ID by username
     receiver_slack_id = get_slack_user_by_username(username)
@@ -93,7 +117,6 @@ async def slack_praise_command(request: Request, db: Session = Depends(get_db)):
     # Get receiver from database
     receiver = get_user_by_slack_id(receiver_slack_id, db)
     if not receiver:
-        # Get their info from Slack
         slack_info = get_slack_user_info(receiver_slack_id)
         return {
             "response_type": "ephemeral",
@@ -105,20 +128,6 @@ async def slack_praise_command(request: Request, db: Session = Depends(get_db)):
         return {
             "response_type": "ephemeral",
             "text": "❌ You can't praise yourself!"
-        }
-    
-    # Find core value by name (remove # if present)
-    core_value_name = core_value_text.replace("#", "").strip()
-    core_value = db.query(models.CoreValue).filter(
-        models.CoreValue.name.ilike(f"%{core_value_name}%")
-    ).first()
-    
-    if not core_value:
-        available_values = db.query(models.CoreValue).all()
-        values_list = ", ".join([f"#{cv.name.replace(' ', '')}" for cv in available_values])
-        return {
-            "response_type": "ephemeral",
-            "text": f"❌ Core value not found. Available values: {values_list}"
         }
     
     # Create praise
@@ -133,7 +142,7 @@ async def slack_praise_command(request: Request, db: Session = Depends(get_db)):
     
     # Update points
     receiver.points_balance += points_awarded
-    giver.points_balance += 5  # Giver gets 5 points
+    giver.points_balance += 5
     
     db.add(new_praise)
     db.commit()
@@ -146,7 +155,7 @@ async def slack_praise_command(request: Request, db: Session = Depends(get_db)):
     
     return {
         "response_type": "in_channel",
-        "text": f"🎉 {giver.first_name} praised {receiver.first_name} for *{core_value.name}*!\n\"{message}\"\n\n+{points_awarded} points to {receiver.first_name}, +5 points to {giver.first_name}"
+        "text": f"🎉 {giver.first_name} praised {receiver.first_name} for *{core_value.name}*!\n\n\"{message}\"\n\n+{points_awarded} points to {receiver.first_name}, +5 points to {giver.first_name}"
     }
 
 @router.post("/slack/my-praise")
