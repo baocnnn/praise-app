@@ -41,14 +41,11 @@ async def slack_praise_command(request: Request, db: Session = Depends(get_db)):
     slack_user_id = form_data.get("user_id")
     text = form_data.get("text", "").strip()
     
-    # Get giver from database
-    giver = get_user_by_slack_id(slack_user_id, db)
-    if not giver:
-        return {
-            "response_type": "ephemeral",
-            "text": "❌ You need to link your Slack account first. Please register on the web app and we'll connect your account."
-        }
-    
+    # DEBUG: Show what we received
+    return {
+        "response_type": "ephemeral",
+        "text": f"DEBUG - Received text: `{text}`\n\nFirst 50 chars: `{text[:50]}`"
+    }
     # Parse the command text
     # Expected format: <@U12345|user> "message" #core-value
     # Or: <@U12345> "message" #core-value
