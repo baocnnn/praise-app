@@ -433,10 +433,10 @@ async def handle_tta_message(event):
 async def get_channel_name(channel_id):
     """Get channel name from ID"""
     async with httpx.AsyncClient() as client:
-        response = await client.post(
+        response = await client.get(
             "https://slack.com/api/conversations.info",
             headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
-            json={"channel": channel_id}
+            params={"channel": channel_id}  # Changed from json to params
         )
         data = response.json()
         
@@ -452,10 +452,10 @@ async def get_channel_name(channel_id):
 async def get_user_info(user_id):
     """Get user details from Slack"""
     async with httpx.AsyncClient() as client:
-        response = await client.post(
+        response = await client.get(
             "https://slack.com/api/users.info",
             headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
-            json={"user": user_id}
+            params={"user": user_id}  # Changed from json to params
         )
         data = response.json()
         
