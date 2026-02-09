@@ -403,7 +403,7 @@ async def handle_tta_message(event):
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f"*🗣️ TTA from <#{channel_id}>*"
+                "text": f"*TTA from <#{channel_id}>*"
             }
         },
         {
@@ -418,7 +418,7 @@ async def handle_tta_message(event):
             "elements": [
                 {
                     "type": "mrkdwn",
-                    "text": f"<{message_link}|View original message> | Posted {datetime.now().strftime('%I:%M %p')}"
+                    "text": f"<{message_link}|View original message>"
                 }
             ]
         }
@@ -458,8 +458,15 @@ async def get_user_info(user_id):
             json={"user": user_id}
         )
         data = response.json()
+        
+        if not data.get("ok"):
+            print(f"❌ Failed to get user info: {data.get('error')} for user {user_id}")
+            return {}
+            
         if data.get("ok"):
-            return data.get("user", {})
+            user_data = data.get("user", {})
+            print(f"✅ Got user info for: {user_data.get('real_name', 'Unknown')}")
+            return user_data
         return {}
 
 
