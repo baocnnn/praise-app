@@ -1,3 +1,7 @@
+import httpx
+import asyncio
+import os
+from datetime import datetime
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,6 +11,7 @@ from contextlib import asynccontextmanager
 from . import models, schemas, auth
 from .database import engine, get_db
 from .slack_endpoints import router as slack_router
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -29,6 +34,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(slack_router)
+
+MEETINGS_CHANNEL_ID = os.getenv("MEETINGS_CHANNEL_ID")
+SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
 # ============== AUTHENTICATION ENDPOINTS ==============
     
 @app.post("/register", response_model=schemas.UserResponse)
@@ -351,6 +359,112 @@ def admin_get_all_redemptions(
     ).order_by(models.Redemption.redeemed_at.desc()).all()
     
     return redemptions
+
+
+@app.post("/slack/events")
+async def slack_events(request: Request):
+    data = await request.json()
+
+    if data.get("type") == "event_callback":
+        event = data["event"]
+
+        if event.get("bot_id") or event.get("subtype") == "bot_message":
+            return {"ok": True}
+        
+        message_text = event.get("test", "")
+        if event.get("type") == "message" and message_text.upper().startswith("TTA"):
+            await handle_tta_message(event)
+        return {"ok": True}
+async def handle_tta_message(event):
+    original_text = event.get("text", "")
+    user_id = event.get("user")
+    channel_id = event.get("channel")
+    timestamp = event.get("ts")
+
+    channel_name = await get_channel_name(channel_id)
+    user_info = await get_user_info(user_id)
+    user_real_name = user_info.get("real_name", "Unknown User")
+
+    workspace_domain = os.getenv("SLACK_WORKSPACE_DOMAIN", "your-workspace")
+    message_link = f"https://{workspace_domain}.slack.com/archives/{channel_id}/p{timestamp.replace('.', '')}"
+    
+    # Format message for #meetings using Slack Block Kit
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*🗣️ TTA from <#{channel_id}>*"
+            }
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*{user_real_name}:*\n{original_text}"
+            }
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": f"<{message_link}|View original message> | Posted {datetime.now().strftime('%I:%M %p')}"
+                }
+            ]
+        }
+    ]
+    
+    # Post to #meetings
+    await post_to_slack(MEETINGS_CHANNEL_ID, blocks=blocks)
+    
+    print(f"✅ Posted TTA from #{channel_name} to #meetings")
+
+async def get_channel_name(channel_id):
+    """Get channel name from ID"""
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://slack.com/api/conversations.info",
+            headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+            json={"channel": channel_id}
+        )
+        data = response.json()
+        if data.get("ok"):
+            return data.get("channel", {}).get("name", "unknown-channel")
+        return "unknown-channel"
+
+async def get_user_info(user_id):
+    """Get user details from Slack"""
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://slack.com/api/users.info",
+            headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+            json={"user": user_id}
+        )
+        data = response.json()
+        if data.get("ok"):
+            return data.get("user", {})
+        return {}
+
+async def post_to_slack(channel_id, text=None, blocks=None):
+    """Post message to Slack channel"""
+    async with httpx.AsyncClient() as client:
+        payload = {
+            "channel": channel_id,
+            "unfurl_links": False
+        }
+        
+        if blocks:
+            payload["blocks"] = blocks
+        if text:
+            payload["text"] = text
+            
+        response = await client.post(
+            "https://slack.com/api/chat.postMessage",
+            headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+            json=payload
+        )
+        return response.json()
 # ============== TEST ENDPOINT ==============
 
 @app.get("/")
