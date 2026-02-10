@@ -384,50 +384,15 @@ async def slack_events(request: Request):
 
 
 async def handle_tta_message(event):
-    """Cross-post TTA message to #meetings channel"""
+    """Handle TTA message - will create Trello card when configured"""
     original_text = event.get("text", "")
-    user_id = event.get("user")
     channel_id = event.get("channel")
-    timestamp = event.get("ts")
-
+    
     channel_name = await get_channel_name(channel_id)
-    user_info = await get_user_info(user_id)
-    user_real_name = user_info.get("real_name", "Unknown User")
-
-    workspace_domain = os.getenv("SLACK_WORKSPACE_DOMAIN", "your-workspace")
-    message_link = f"https://{workspace_domain}.slack.com/archives/{channel_id}/p{timestamp.replace('.', '')}"
     
-    # Format message for #meetings using Slack Block Kit
-    blocks = [
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"*TTA from <#{channel_id}>*"
-            }
-        },
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"*{user_real_name}:*\n{original_text}"
-            }
-        },
-        {
-            "type": "context",
-            "elements": [
-                {
-                    "type": "mrkdwn",
-                    "text": f"<{message_link}|View original message>"
-                }
-            ]
-        }
-    ]
-    
-    # Post to #meetings
-    await post_to_slack(MEETINGS_CHANNEL_ID, blocks=blocks)
-    
-    print(f"✅ Posted TTA from #{channel_name} to #meetings")
+    # Just log it for now
+    print(f"TTA detected from #{channel_name}: {original_text}")
+    print(f"TODO: Create Trello card based on keywords")
 
 
 async def get_channel_name(channel_id):
