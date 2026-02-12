@@ -416,6 +416,13 @@ async def handle_tta_message(event):
     if not trello_list_id:
         print(f"No Trello board mapped for channel #{channel_name} - skipping")
         return
+    files = event.get("files", [])
+    images = [
+        f for f in files
+        if f.get("mimetype", "").startswith("image/")
+    ]
+
+    print(f"📎 Found {len(images)} image(s) attached to TTA message")
 
     # Create the Trello card
     await create_trello_card(
@@ -434,7 +441,6 @@ async def create_trello_card(list_id, channel_name, user_name, message, slack_li
     
     # Card description: full message + who posted it + link back to Slack
     description = f"""**Posted by:** {user_name}
-**Channel:** #{channel_name}
 
 **Message:**
 {message}
