@@ -471,12 +471,12 @@ async def create_trello_card(list_id, channel_name, user_name, message, slack_li
         result = response.json()
 
         if not result.get("id"):
-            print(f"❌ Failed to create Trello card: {result}")
+            print(f"Failed to create Trello card: {result}")
             return result
 
         card_id = result.get("id")
         card_url = result.get("url", "")
-        print(f"✅ Trello card created in #{channel_name} board: {card_url}")
+        print(f"Trello card created in #{channel_name} board: {card_url}")
 
         # Step 2: Attach images if any
         if images:
@@ -493,13 +493,11 @@ async def attach_image_to_card(client, card_id, image):
     mimetype = image.get("mimetype", "image/jpeg")
 
     if not image_url:
-        print(f"⚠️ No URL found for image {image_name}")
+        print(f"No URL found for image {image_name}")
         return
 
     try:
-        # Step 1: Download image from Slack
-        # Must use bot token to access private Slack files
-        print(f"⬇️ Downloading image from Slack: {image_name}")
+        print(f"Downloading image from Slack: {image_name}")
         image_response = await client.get(
             image_url,
             headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
@@ -507,14 +505,14 @@ async def attach_image_to_card(client, card_id, image):
         )
 
         if image_response.status_code != 200:
-            print(f"❌ Failed to download image: {image_response.status_code}")
+            print(f"Failed to download image: {image_response.status_code}")
             return
 
         image_data = image_response.content
-        print(f"✅ Downloaded image: {image_name} ({len(image_data)} bytes)")
+        print(f"Downloaded image: {image_name} ({len(image_data)} bytes)")
 
         # Step 2: Upload image to Trello card
-        print(f"⬆️ Uploading image to Trello card...")
+        print(f"Uploading image to Trello card...")
         upload_response = await client.post(
             f"https://api.trello.com/1/cards/{card_id}/attachments",
             params={
@@ -529,12 +527,12 @@ async def attach_image_to_card(client, card_id, image):
         upload_result = upload_response.json()
 
         if upload_result.get("id"):
-            print(f"✅ Image attached to Trello card: {image_name}")
+            print(f"Image attached to Trello card: {image_name}")
         else:
-            print(f"❌ Failed to attach image: {upload_result}")
+            print(f"Failed to attach image: {upload_result}")
 
     except Exception as e:
-        print(f"❌ Error attaching image: {e}")
+        print(f"Error attaching image: {e}")
 
 async def get_channel_name(channel_id):
     """Get channel name from ID"""
