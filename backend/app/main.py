@@ -412,14 +412,15 @@ async def slack_events(request: Request):
         if len(processed_events) > 1000:
             processed_events.clear()
 
-        message_text = event.get("text", "").upper()
+    message_text = event.get("text", "").upper()
 
-        # Announcement is highest priority (frontoffice only)
-        if "ANNOUNCEMENT" in message_text:
-            await handle_announcement_message(event)
-        # TTA is second priority
-        elif message_text.startswith("TTA"):
-            await handle_tta_message(event)
+# Announcement is highest priority (frontoffice only)
+# Handles both correct spelling and common misspelling
+    if "ANNOUNCEMENT" in message_text or "ANNOUCEMENT" in message_text:
+        await handle_announcement_message(event)
+# TTA is second priority
+    elif message_text.startswith("TTA"):
+        await handle_tta_message(event)
 
     return {"ok": True}
 
