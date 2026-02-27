@@ -63,18 +63,84 @@ CHANNEL_TO_TRELLO_LIST = {
 }
 
 processed_events = set()
-
-def extract_full_message_content(event):
+async def expand_slack_mentions(text, client=None):
+    """Convert Slack mentions to readable names"""
+    import re
+    
+    if client is None:
+        client = httpx.AsyncClient()
+        close_client = True
+    else:
+        close_client = False
+    
+    # Find all user mentions: <@U12345>
+    user_mentions = re.findall(r'<@(U[A-Z0-9]+)>', text)
+    for user_id in user_mentions:
+        try:
+            response = await client.get(
+                "https://slack.com/api/users.info",
+                headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+                params={"user": user_id}
+            )
+            data = response.json()
+            if data.get("ok"):
+                name = data.get("user", {}).get("real_name", user_id)
+                text = text.replace(f"<@{user_id}>", f"@{name}")
+        except:
+            pass
+    
+    # Find all usergroup mentions: <!subteam^S12345>
+    group_mentions = re.findall(r'<!subteam\^([A-Z0-9]+)>', text)
+    for group_id in group_mentions:
+        try:
+            response = await client.get(
+                "https://slack.com/api/usergroups.info",
+                headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+                params={"usergroup": group_id}
+            )
+            data = response.json()
+            if data.get("ok"):
+                handle = data.get("usergroup", {}).get("handle", group_id)
+                text = text.replace(f"<!subteam^{group_id}>", f"@{handle}")
+        except:
+            pass
+    
+    # Clean up other special mentions
+    text = text.replace("<!channel>", "@channel")
+    text = text.replace("<!here>", "@here")
+    text = text.replace("<!everyone>", "@everyone")
+    
+    if close_client:
+        await client.aclose()
+    
+    return text
+ 
+async def extract_full_message_content(event):
+    """Extract the full message including forwarded content and attachments"""
     original_text = event.get("text", "")
+    images_to_attach = []
+    
+    # Expand mentions first
+    original_text = await expand_slack_mentions(original_text)
     
     # Check for forwarded messages (attachments)
     attachments = event.get("attachments", [])
     if attachments:
         for attachment in attachments:
-            if attachment.get("text"):
-                original_text += f"\n\n**Forwarded message:**\n{attachment.get('text')}"
-            if attachment.get("fallback"):
-                original_text += f"\n{attachment.get('fallback')}"
+            # Get the text content
+            att_text = attachment.get("text", "") or attachment.get("fallback", "")
+            if att_text:
+                # Expand mentions in forwarded content too
+                att_text = await expand_slack_mentions(att_text)
+                original_text += f"\n\n**Forwarded message:**\n{att_text}"
+            
+            # Check for images in the forwarded message
+            if attachment.get("image_url"):
+                images_to_attach.append({
+                    "url_private": attachment.get("image_url"),
+                    "name": "forwarded_image.jpg",
+                    "mimetype": "image/jpeg"
+                })
     
     # Check for file shares with previews
     files = event.get("files", [])
@@ -82,8 +148,7 @@ def extract_full_message_content(event):
         if file.get("preview"):
             original_text += f"\n\n**File preview:**\n{file.get('preview')}"
     
-    return original_text
-
+    return original_text, images_to_attach
 # ============== AUTHENTICATION ENDPOINTS ==============
     
 @app.post("/register", response_model=schemas.UserResponse)
@@ -451,7 +516,7 @@ async def slack_events(request: Request):
 async def handle_tta_message(event):
     """Handle TTA message - create Trello card in appropriate board"""
     # Get full message content including forwards
-    original_text = extract_full_message_content(event)
+    original_text, forwarded_images = await extract_full_message_content(event)
     user_id = event.get("user")
     channel_id = event.get("channel")
     timestamp = event.get("ts")
@@ -471,18 +536,20 @@ async def handle_tta_message(event):
         print(f"⚠️ No Trello board mapped for channel #{channel_name} - skipping")
         return
 
-    # Check for attached images (not text attachments)
+    # Collect both direct images and forwarded images
     files = event.get("files", [])
-    images = [f for f in files if f.get("mimetype", "").startswith("image/")]
-    print(f"📎 Found {len(images)} image(s) attached to TTA message")
+    direct_images = [f for f in files if f.get("mimetype", "").startswith("image/")]
+    all_images = direct_images + forwarded_images
+    
+    print(f"📎 Found {len(all_images)} image(s) attached to TTA message")
 
     await create_trello_card(
         list_id=trello_list_id,
         channel_name=channel_name,
         user_name=user_real_name,
-        message=original_text,  # Now includes forwarded content
+        message=original_text,
         slack_link=message_link,
-        images=images,
+        images=all_images,
         card_type="TTA"
     )
 
@@ -681,7 +748,7 @@ async def post_to_slack(channel_id, text=None, blocks=None):
 async def handle_announcement_message(event):
     """Handle announcement - only for #frontoffice channel"""
     # Get full message content including forwards
-    original_text = extract_full_message_content(event)
+    original_text, forwarded_images = await extract_full_message_content(event)
     user_id = event.get("user")
     channel_id = event.get("channel")
     timestamp = event.get("ts")
@@ -701,18 +768,20 @@ async def handle_announcement_message(event):
         print(f"⚠️ No announcement list mapped for channel #{channel_name} - skipping")
         return
 
-    # Check for attached images
+    # Collect both direct images and forwarded images
     files = event.get("files", [])
-    images = [f for f in files if f.get("mimetype", "").startswith("image/")]
-    print(f"📎 Found {len(images)} image(s) attached to announcement")
+    direct_images = [f for f in files if f.get("mimetype", "").startswith("image/")]
+    all_images = direct_images + forwarded_images
+    
+    print(f"📎 Found {len(all_images)} image(s) attached to announcement")
 
     await create_trello_card(
         list_id=trello_list_id,
         channel_name=channel_name,
         user_name=user_real_name,
-        message=original_text,  # Now includes forwarded content
+        message=original_text,
         slack_link=message_link,
-        images=images,
+        images=all_images,
         card_type="Announcement"
     )
 # ============== TEST ENDPOINT ==============
