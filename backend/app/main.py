@@ -41,7 +41,7 @@ TRELLO_API_KEY = os.getenv("TRELLO_API_KEY")
 TRELLO_TOKEN = os.getenv("TRELLO_TOKEN")
 
 CHANNEL_TO_TRELLO_LIST = {
-    "provider": {
+    "providers": {
         "issues": "6483543ec44e0f245fae9002"
     },
     "frontoffice": {
@@ -51,7 +51,7 @@ CHANNEL_TO_TRELLO_LIST = {
     "hygienist": {
         "issues": "617431ba61c5c56bedea397c"
     },
-    "assistant": {
+    "assistants": {
         "issues": "61e214aaf219b71c221944f4"
     },
     "hygiene": {
