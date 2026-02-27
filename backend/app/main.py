@@ -128,26 +128,68 @@ async def extract_full_message_content(event):
     attachments = event.get("attachments", [])
     if attachments:
         for attachment in attachments:
-            # Get the text content
-            att_text = attachment.get("text", "") or attachment.get("fallback", "")
-            if att_text:
-                # Expand mentions in forwarded content too
-                att_text = await expand_slack_mentions(att_text)
-                original_text += f"\n\n**Forwarded message:**\n{att_text}"
+            # Handle different attachment types
             
-            # Check for images in the forwarded message
+            # 1. Message shares/forwards (most common)
+            if attachment.get("is_msg_unfurl") or attachment.get("is_share"):
+                # Get the actual message text
+                att_text = attachment.get("text", "")
+                
+                # Also check for fallback which sometimes has cleaner content
+                if not att_text:
+                    att_text = attachment.get("fallback", "")
+                
+                # Get author info if available
+                author = attachment.get("author_name", "")
+                
+                if att_text:
+                    # Clean up the text - remove mrkdwn links like <http://...|text>
+                    import re
+                    att_text = re.sub(r'<https?://[^|>]+\|([^>]+)>', r'\1', att_text)
+                    att_text = re.sub(r'<https?://[^>]+>', '', att_text)
+                    
+                    # Expand mentions in forwarded content
+                    att_text = await expand_slack_mentions(att_text)
+                    
+                    if author:
+                        original_text += f"\n\n**Forwarded from {author}:**\n{att_text}"
+                    else:
+                        original_text += f"\n\n**Forwarded message:**\n{att_text}"
+            
+            # 2. Regular text attachments
+            elif attachment.get("text"):
+                att_text = attachment.get("text", "")
+                att_text = await expand_slack_mentions(att_text)
+                original_text += f"\n\n{att_text}"
+            
+            # 3. Check for images in attachments
             if attachment.get("image_url"):
                 images_to_attach.append({
                     "url_private": attachment.get("image_url"),
                     "name": "forwarded_image.jpg",
                     "mimetype": "image/jpeg"
                 })
+            
+            # 4. Check for thumb images
+            if attachment.get("thumb_url") and not attachment.get("image_url"):
+                images_to_attach.append({
+                    "url_private": attachment.get("thumb_url"),
+                    "name": "forwarded_thumb.jpg",
+                    "mimetype": "image/jpeg"
+                })
     
-    # Check for file shares with previews
+    # Check for direct file shares with previews
     files = event.get("files", [])
     for file in files:
         if file.get("preview"):
             original_text += f"\n\n**File preview:**\n{file.get('preview')}"
+    
+    # Final cleanup - remove any remaining Slack formatting artifacts
+    import re
+    # Remove channel links like <#C12345|channel-name>
+    original_text = re.sub(r'<#[A-Z0-9]+\|([^>]+)>', r'#\1', original_text)
+    # Remove remaining angle brackets around URLs
+    original_text = re.sub(r'<(https?://[^>]+)>', r'\1', original_text)
     
     return original_text, images_to_attach
 # ============== AUTHENTICATION ENDPOINTS ==============
@@ -600,9 +642,6 @@ async def create_trello_card(list_id, channel_name, user_name, message, slack_li
                 await attach_image_to_card(client, card_id, image)
 
     return result
-
-
-
 
 async def attach_image_to_card(client, card_id, image):
     """Download image from Slack and upload to Trello card"""
