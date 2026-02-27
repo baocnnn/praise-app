@@ -117,7 +117,7 @@ async def expand_slack_mentions(text, client=None):
     return text
  
 async def extract_full_message_content(event):
-    """Extract the full message including forwarded content and attachments"""
+    
     original_text = event.get("text", "")
     images_to_attach = []
     
@@ -126,69 +126,102 @@ async def extract_full_message_content(event):
     
     # Check for forwarded messages (attachments)
     attachments = event.get("attachments", [])
-    if attachments:
+    
+    async with httpx.AsyncClient() as client:
         for attachment in attachments:
-            # Handle different attachment types
-            
-            # 1. Message shares/forwards (most common)
+            # Handle message shares - need to fetch the actual message
             if attachment.get("is_msg_unfurl") or attachment.get("is_share"):
-                # Get the actual message text
-                att_text = attachment.get("text", "")
+                # Extract channel and timestamp from the attachment
+                # Format: "Posted in <#CHANNEL_ID|channel-name>"
+                from_channel = attachment.get("channel_id") or attachment.get("from_channel")
+                msg_ts = attachment.get("ts")
                 
-                # Also check for fallback which sometimes has cleaner content
-                if not att_text:
-                    att_text = attachment.get("fallback", "")
+                # If we have both, fetch the actual message
+                if from_channel and msg_ts:
+                    try:
+                        response = await client.get(
+                            "https://slack.com/api/conversations.history",
+                            headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+                            params={
+                                "channel": from_channel,
+                                "latest": msg_ts,
+                                "inclusive": True,
+                                "limit": 1
+                            }
+                        )
+                        data = response.json()
+                        
+                        if data.get("ok") and data.get("messages"):
+                            shared_msg = data["messages"][0]
+                            shared_text = shared_msg.get("text", "")
+                            
+                            # Expand mentions in the shared message
+                            shared_text = await expand_slack_mentions(shared_text)
+                            
+                            # Get author info
+                            author_id = shared_msg.get("user")
+                            if author_id:
+                                user_response = await client.get(
+                                    "https://slack.com/api/users.info",
+                                    headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+                                    params={"user": author_id}
+                                )
+                                user_data = user_response.json()
+                                if user_data.get("ok"):
+                                    author_name = user_data.get("user", {}).get("real_name", "Unknown")
+                                    original_text += f"\n\n**Forwarded from {author_name}:**\n{shared_text}"
+                                else:
+                                    original_text += f"\n\n**Forwarded message:**\n{shared_text}"
+                            else:
+                                original_text += f"\n\n**Forwarded message:**\n{shared_text}"
+                            
+                            # Check for images in the shared message
+                            shared_files = shared_msg.get("files", [])
+                            for file in shared_files:
+                                if file.get("mimetype", "").startswith("image/"):
+                                    images_to_attach.append({
+                                        "url_private": file.get("url_private"),
+                                        "name": file.get("name", "shared_image.jpg"),
+                                        "mimetype": file.get("mimetype", "image/jpeg")
+                                    })
+                    except Exception as e:
+                        print(f"⚠️ Failed to fetch shared message: {e}")
+                        # Fall back to attachment text if fetch fails
+                        att_text = attachment.get("text", "") or attachment.get("fallback", "")
+                        if att_text:
+                            att_text = await expand_slack_mentions(att_text)
+                            original_text += f"\n\n**Forwarded message:**\n{att_text}"
                 
-                # Get author info if available
-                author = attachment.get("author_name", "")
-                
-                if att_text:
-                    # Clean up the text - remove mrkdwn links like <http://...|text>
-                    import re
-                    att_text = re.sub(r'<https?://[^|>]+\|([^>]+)>', r'\1', att_text)
-                    att_text = re.sub(r'<https?://[^>]+>', '', att_text)
-                    
-                    # Expand mentions in forwarded content
-                    att_text = await expand_slack_mentions(att_text)
-                    
-                    if author:
-                        original_text += f"\n\n**Forwarded from {author}:**\n{att_text}"
-                    else:
-                        original_text += f"\n\n**Forwarded message:**\n{att_text}"
+                # Check for images in the attachment itself
+                if attachment.get("image_url"):
+                    images_to_attach.append({
+                        "url_private": attachment.get("image_url"),
+                        "name": "forwarded_image.jpg",
+                        "mimetype": "image/jpeg"
+                    })
             
-            # 2. Regular text attachments
+            # Handle regular attachments (non-shares)
             elif attachment.get("text"):
                 att_text = attachment.get("text", "")
                 att_text = await expand_slack_mentions(att_text)
                 original_text += f"\n\n{att_text}"
-            
-            # 3. Check for images in attachments
-            if attachment.get("image_url"):
-                images_to_attach.append({
-                    "url_private": attachment.get("image_url"),
-                    "name": "forwarded_image.jpg",
-                    "mimetype": "image/jpeg"
-                })
-            
-            # 4. Check for thumb images
-            if attachment.get("thumb_url") and not attachment.get("image_url"):
-                images_to_attach.append({
-                    "url_private": attachment.get("thumb_url"),
-                    "name": "forwarded_thumb.jpg",
-                    "mimetype": "image/jpeg"
-                })
+                
+                if attachment.get("image_url"):
+                    images_to_attach.append({
+                        "url_private": attachment.get("image_url"),
+                        "name": "attachment_image.jpg",
+                        "mimetype": "image/jpeg"
+                    })
     
-    # Check for direct file shares with previews
+    # Check for direct file shares
     files = event.get("files", [])
     for file in files:
         if file.get("preview"):
             original_text += f"\n\n**File preview:**\n{file.get('preview')}"
     
-    # Final cleanup - remove any remaining Slack formatting artifacts
+    # Final cleanup
     import re
-    # Remove channel links like <#C12345|channel-name>
     original_text = re.sub(r'<#[A-Z0-9]+\|([^>]+)>', r'#\1', original_text)
-    # Remove remaining angle brackets around URLs
     original_text = re.sub(r'<(https?://[^>]+)>', r'\1', original_text)
     
     return original_text, images_to_attach
