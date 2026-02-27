@@ -46,7 +46,8 @@ CHANNEL_TO_TRELLO_LIST = {
     },
     "frontoffice": {
         "issues":       "61e2179fcbf1fe646e85cf69",
-        "announcement": "61e2173c83bddb327ec93d4d"
+        "announcement": "61e2173c83bddb327ec93d4d",
+        "task":         "61e2174a3d5379613e67a5bb"
     },
     "hygienist": {
         "issues": "617431ba61c5c56bedea397c"
@@ -502,15 +503,15 @@ async def slack_events(request: Request):
 
     message_text = event.get("text", "").upper()
 
-# Announcement is highest priority (frontoffice only)
-# Handles both correct spelling and common misspelling
-    if "ANNOUNCEMENT" in message_text or "ANNOUCEMENT" in message_text:
+    # Priority order: Task > Announcement > TTA
+    if message_text.startswith("TASK"):
+        await handle_task_message(event)
+    elif "ANNOUNCEMENT" in message_text or "ANNOUCEMENT" in message_text:
         await handle_announcement_message(event)
-# TTA is second priority
     elif message_text.startswith("TTA"):
         await handle_tta_message(event)
 
-    return {"ok": True}
+        return {"ok": True}
 
 
 async def handle_tta_message(event):
@@ -783,6 +784,44 @@ async def handle_announcement_message(event):
         slack_link=message_link,
         images=all_images,
         card_type="Announcement"
+    )
+async def handle_task_message(event):
+    # Get full message content including forwards
+    original_text, forwarded_images = await extract_full_message_content(event)
+    user_id = event.get("user")
+    channel_id = event.get("channel")
+    timestamp = event.get("ts")
+
+    channel_name = await get_channel_name(channel_id)
+    user_info = await get_user_info(user_id)
+    user_real_name = user_info.get("real_name", "Unknown User")
+
+    workspace_domain = os.getenv("SLACK_WORKSPACE_DOMAIN", "apexdentalstudio")
+    message_link = f"https://{workspace_domain}.slack.com/archives/{channel_id}/p{timestamp.replace('.', '')}"
+
+    # Look up task list for this channel
+    channel_config = CHANNEL_TO_TRELLO_LIST.get(channel_name, {})
+    trello_list_id = channel_config.get("task")
+
+    if not trello_list_id:
+        print(f"⚠️ No task list mapped for channel #{channel_name} - skipping")
+        return
+
+    # Collect both direct images and forwarded images
+    files = event.get("files", [])
+    direct_images = [f for f in files if f.get("mimetype", "").startswith("image/")]
+    all_images = direct_images + forwarded_images
+    
+    print(f"📎 Found {len(all_images)} image(s) attached to task")
+
+    await create_trello_card(
+        list_id=trello_list_id,
+        channel_name=channel_name,
+        user_name=user_real_name,
+        message=original_text,
+        slack_link=message_link,
+        images=all_images,
+        card_type="Task"
     )
 # ============== TEST ENDPOINT ==============
 
