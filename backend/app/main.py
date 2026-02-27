@@ -64,6 +64,26 @@ CHANNEL_TO_TRELLO_LIST = {
 
 processed_events = set()
 
+def extract_full_message_content(event):
+    original_text = event.get("text", "")
+    
+    # Check for forwarded messages (attachments)
+    attachments = event.get("attachments", [])
+    if attachments:
+        for attachment in attachments:
+            if attachment.get("text"):
+                original_text += f"\n\n**Forwarded message:**\n{attachment.get('text')}"
+            if attachment.get("fallback"):
+                original_text += f"\n{attachment.get('fallback')}"
+    
+    # Check for file shares with previews
+    files = event.get("files", [])
+    for file in files:
+        if file.get("preview"):
+            original_text += f"\n\n**File preview:**\n{file.get('preview')}"
+    
+    return original_text
+
 # ============== AUTHENTICATION ENDPOINTS ==============
     
 @app.post("/register", response_model=schemas.UserResponse)
@@ -430,7 +450,8 @@ async def slack_events(request: Request):
 
 async def handle_tta_message(event):
     """Handle TTA message - create Trello card in appropriate board"""
-    original_text = event.get("text", "")
+    # Get full message content including forwards
+    original_text = extract_full_message_content(event)
     user_id = event.get("user")
     channel_id = event.get("channel")
     timestamp = event.get("ts")
@@ -450,7 +471,7 @@ async def handle_tta_message(event):
         print(f"⚠️ No Trello board mapped for channel #{channel_name} - skipping")
         return
 
-    # Check for attached images
+    # Check for attached images (not text attachments)
     files = event.get("files", [])
     images = [f for f in files if f.get("mimetype", "").startswith("image/")]
     print(f"📎 Found {len(images)} image(s) attached to TTA message")
@@ -459,7 +480,7 @@ async def handle_tta_message(event):
         list_id=trello_list_id,
         channel_name=channel_name,
         user_name=user_real_name,
-        message=original_text,
+        message=original_text,  # Now includes forwarded content
         slack_link=message_link,
         images=images,
         card_type="TTA"
@@ -659,7 +680,8 @@ async def post_to_slack(channel_id, text=None, blocks=None):
     
 async def handle_announcement_message(event):
     """Handle announcement - only for #frontoffice channel"""
-    original_text = event.get("text", "")
+    # Get full message content including forwards
+    original_text = extract_full_message_content(event)
     user_id = event.get("user")
     channel_id = event.get("channel")
     timestamp = event.get("ts")
@@ -688,7 +710,7 @@ async def handle_announcement_message(event):
         list_id=trello_list_id,
         channel_name=channel_name,
         user_name=user_real_name,
-        message=original_text,
+        message=original_text,  # Now includes forwarded content
         slack_link=message_link,
         images=images,
         card_type="Announcement"
