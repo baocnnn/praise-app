@@ -93,24 +93,35 @@ async def expand_slack_mentions(text, client=None):
     # Find all usergroup mentions: <!subteam^S12345>
     group_mentions = re.findall(r'<!subteam\^([A-Z0-9]+)>', text)
     
-    for group_id in group_mentions:
+    if group_mentions:
         try:
-            response = await client.post(  # Changed from GET to POST
-                "https://slack.com/api/usergroups.info",
-                headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
-                json={"usergroup": group_id}  # Changed from params to json
+            # Get all usergroups
+            response = await client.get(
+                "https://slack.com/api/usergroups.list",
+                headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
             )
             data = response.json()
             
             if data.get("ok"):
-                handle = data.get("usergroup", {}).get("handle", group_id)
-                text = text.replace(f"<!subteam^{group_id}>", handle)
+                usergroups = data.get("usergroups", [])
+                
+                # Create a lookup dict
+                group_lookup = {ug["id"]: ug.get("handle", ug["id"]) for ug in usergroups}
+                
+                # Replace each mention
+                for group_id in group_mentions:
+                    if group_id in group_lookup:
+                        handle = group_lookup[group_id]
+                        text = text.replace(f"<!subteam^{group_id}>", handle)
+                        print(f"✅ Replaced usergroup {group_id} with {handle}")
+                    else:
+                        print(f"⚠️ Usergroup {group_id} not found in list")
             else:
-                print(f"❌ Failed to get usergroup info: {data.get('error')}")
+                print(f"❌ Failed to list usergroups: {data.get('error')}")
         except Exception as e:
-            print(f"❌ Error expanding usergroup mention: {e}")
+            print(f"❌ Error expanding usergroup mentions: {e}")
     
-    # Clean up other special mentions (remove @ symbol)
+    # Clean up other special mentions
     text = text.replace("<!channel>", "channel")
     text = text.replace("<!here>", "here")
     text = text.replace("<!everyone>", "everyone")
