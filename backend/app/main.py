@@ -65,7 +65,7 @@ CHANNEL_TO_TRELLO_LIST = {
 
 processed_events = set()
 async def expand_slack_mentions(text, client=None):
-    """Convert Slack mentions to readable names"""
+    """Convert Slack mentions to readable names (without @ to avoid Trello mentions)"""
     import re
     
     if client is None:
@@ -86,7 +86,7 @@ async def expand_slack_mentions(text, client=None):
             data = response.json()
             if data.get("ok"):
                 name = data.get("user", {}).get("real_name", user_id)
-                text = text.replace(f"<@{user_id}>", f"@{name}")
+                text = text.replace(f"<@{user_id}>", name)  # Changed from f"@{name}"
         except:
             pass
     
@@ -102,14 +102,14 @@ async def expand_slack_mentions(text, client=None):
             data = response.json()
             if data.get("ok"):
                 handle = data.get("usergroup", {}).get("handle", group_id)
-                text = text.replace(f"<!subteam^{group_id}>", f"@{handle}")
+                text = text.replace(f"<!subteam^{group_id}>", handle)  # Changed from f"@{handle}"
         except:
             pass
     
-    # Clean up other special mentions
-    text = text.replace("<!channel>", "@channel")
-    text = text.replace("<!here>", "@here")
-    text = text.replace("<!everyone>", "@everyone")
+    # Clean up other special mentions (remove @ symbol)
+    text = text.replace("<!channel>", "channel")
+    text = text.replace("<!here>", "here")
+    text = text.replace("<!everyone>", "everyone")
     
     if close_client:
         await client.aclose()
