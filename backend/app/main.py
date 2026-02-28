@@ -86,25 +86,35 @@ async def expand_slack_mentions(text, client=None):
             data = response.json()
             if data.get("ok"):
                 name = data.get("user", {}).get("real_name", user_id)
-                text = text.replace(f"<@{user_id}>", name)  # Changed from f"@{name}"
-        except:
-            pass
+                text = text.replace(f"<@{user_id}>", name)
+            else:
+                print(f"❌ Failed to get user info: {data.get('error')}")
+        except Exception as e:
+            print(f"❌ Error expanding user mention: {e}")
     
     # Find all usergroup mentions: <!subteam^S12345>
     group_mentions = re.findall(r'<!subteam\^([A-Z0-9]+)>', text)
+    print(f"🔍 Found {len(group_mentions)} group mentions: {group_mentions}")
+    
     for group_id in group_mentions:
         try:
+            print(f"🔍 Fetching usergroup info for {group_id}...")
             response = await client.get(
                 "https://slack.com/api/usergroups.info",
                 headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
                 params={"usergroup": group_id}
             )
             data = response.json()
+            print(f"📥 Usergroup API response: {data}")
+            
             if data.get("ok"):
                 handle = data.get("usergroup", {}).get("handle", group_id)
-                text = text.replace(f"<!subteam^{group_id}>", handle)  # Changed from f"@{handle}"
-        except:
-            pass
+                print(f"✅ Replacing <!subteam^{group_id}> with {handle}")
+                text = text.replace(f"<!subteam^{group_id}>", handle)
+            else:
+                print(f"❌ Failed to get usergroup info: {data.get('error')}")
+        except Exception as e:
+            print(f"❌ Error expanding usergroup mention: {e}")
     
     # Clean up other special mentions (remove @ symbol)
     text = text.replace("<!channel>", "channel")
