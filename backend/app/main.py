@@ -858,6 +858,7 @@ async def handle_announcement_message(event):
         card_type="Announcement"
     )
 async def handle_task_message(event):
+    """Handle task message - only for #frontoffice channel"""
     # Get full message content including forwards
     original_text, forwarded_images = await extract_full_message_content(event)
     user_id = event.get("user")
