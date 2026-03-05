@@ -956,17 +956,22 @@ async def handle_task_message(event):
 
     # --- Extract tagged Slack user from message ---
     mentioned_users = re.findall(r"<@(U[A-Z0-9]+)>", event.get("text", ""))
-    assigned_slack_id = mentioned_users[0] if mentioned_users else None
-    assigned_trello_id = SLACK_TO_TRELLO_MEMBER.get(assigned_slack_id) if assigned_slack_id else None
+    assigned_slack_ids = mentioned_users if mentioned_users else []
+    assigned_trello_ids = [
+        SLACK_TO_TRELLO_MEMBER[uid] 
+        for uid in assigned_slack_ids 
+        if uid in SLACK_TO_TRELLO_MEMBER
+    ]
 
-    # --- Get assigned user's name ---
-    assigned_name = "Unassigned"
-    if assigned_slack_id:
-        assigned_user_info = await get_user_info(assigned_slack_id)
-        print(f"🔍 ASSIGNED USER INFO: {assigned_user_info}")  # ADD THIS
-        assigned_name = assigned_user_info.get("real_name", "Unassigned")
-        print(f"🔍 ASSIGNED NAME RESULT: {assigned_name}")  # ADD THIS
+    # --- Get assigned users' names ---
+    assigned_names = []
+    if assigned_slack_ids:
+        for uid in assigned_slack_ids:
+            user_info = await get_user_info(uid)
+            name = user_info.get("real_name", "Unknown")
+            assigned_names.append(name)
 
+    assigned_names_str = ", ".join(assigned_names) if assigned_names else "Unassigned"
     # --- Get poster's name ---
     poster_info = await get_user_info(user_id)
     poster_name = poster_info.get("real_name", "Unknown")
@@ -974,7 +979,7 @@ async def handle_task_message(event):
     due_date = (datetime.utcnow() + timedelta(days=7)).strftime("%Y-%m-%dT12:00:00.000Z")
 
     card_description = (
-        f"**Assigned to:** {assigned_name}\n"
+        f"**Assigned to:** {assigned_names_str}\n"
         f"**Posted by:** {poster_name}\n"
         f"**Slack message:** {message_link}\n\n"
         f"---\n\n"
@@ -1000,12 +1005,12 @@ async def handle_task_message(event):
                 "key": TRELLO_API_KEY,
                 "token": TRELLO_TOKEN,
                 "idList": ALYANNA_BOARD_7DAY_LIST,
-                "name": f"TASK: {original_text[:80]}",
+                "name": f"{original_text[:80]}",
                 "desc": card_description,
                 "due": due_date,
             }
-            if assigned_trello_id:
-                card_data["idMembers"] = [assigned_trello_id]
+            if assigned_trello_ids:
+                card_data["idMembers"] = assigned_trello_ids
 
             response = await client.post("https://api.trello.com/1/cards", params=card_data)
             alyanna_card = response.json()
@@ -1021,12 +1026,12 @@ async def handle_task_message(event):
                 "key": TRELLO_API_KEY,
                 "token": TRELLO_TOKEN,
                 "idList": L10VA_BOARD_7DAY_LIST,
-                "name": f"TASK: {original_text[:80]}",
+                "name": f"{original_text[:80]}",
                 "desc": card_description,
                 "due": due_date,
             }
-            if assigned_trello_id:
-                card_data["idMembers"] = [assigned_trello_id]
+            if assigned_trello_ids:
+                 card_data["idMembers"] = assigned_trello_ids
 
             response = await client.post("https://api.trello.com/1/cards", params=card_data)
             l10va_card = response.json()
@@ -1035,40 +1040,42 @@ async def handle_task_message(event):
         except Exception as e:
             print(f"❌ Failed to create L10-VA board card: {e}")
 
-        # --- 4. DM the assigned VA ---
-        if assigned_slack_id:
-            try:
-                dm_response = await client.post(
-                    "https://slack.com/api/conversations.open",
-                    headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
-                    json={"users": assigned_slack_id}
-                )
-                dm_channel = dm_response.json()["channel"]["id"]
+        # --- 4. DM all assigned VAs ---
+    for i, uid in enumerate(assigned_slack_ids):
+        try:
+            name = assigned_names[i] if i < len(assigned_names) else "there"
+            dm_response = await client.post(
+                "https://slack.com/api/conversations.open",
+                headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+                json={"users": uid}
+            )
+            print(f"🔍 DM RESPONSE: {dm_response.json()}")
+            dm_channel = dm_response.json()["channel"]["id"]
 
-                dm_text = (
-                    f"👋 Hey {assigned_name}, you've been assigned a new task!\n\n"
-                    f"*Task:* {original_text}\n"
-                    f"*Posted by:* {poster_name}\n"
-                    f"*Due:* 7 days from today\n\n"
-                    f"*Slack message:* {message_link}\n"
-                )
-                if alyanna_card_url:
-                    dm_text += f"*Alyanna's board:* {alyanna_card_url}\n"
-                if l10va_card_url:
-                    dm_text += f"*L10-VA board:* {l10va_card_url}\n"
+            dm_text = (
+                f"👋 Hey {name}, you've been assigned a new task!\n\n"
+                f"*Task:* {original_text}\n"
+                f"*Posted by:* {poster_name}\n"
+                f"*Due:* 7 days from today\n\n"
+                f"*Slack message:* {message_link}\n"
+            )
+            if alyanna_card_url:
+                dm_text += f"*Alyanna's board:* {alyanna_card_url}\n"
+            if l10va_card_url:
+                dm_text += f"*L10-VA board:* {l10va_card_url}\n"
 
-                await client.post(
-                    "https://slack.com/api/chat.postMessage",
-                    headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
-                    json={"channel": dm_channel, "text": dm_text}
-                )
-                print(f"✅ DM sent to {assigned_name}")
-            except Exception as e:
-                print(f"❌ Failed to DM assigned user: {e}")
+            await client.post(
+                "https://slack.com/api/chat.postMessage",
+                headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+                json={"channel": dm_channel, "text": dm_text}
+            )
+            print(f"✅ DM sent to {name}")
+        except Exception as e:
+            print(f"❌ Failed to DM {uid}: {e}")
 
         # --- 5. Reply in thread with Trello links ---
         try:
-            reply_text = f"✅ Task created and assigned to {assigned_name}!\n"
+            reply_text = f"✅ Task created and assigned to {assigned_names_str}!\n"
             if alyanna_card_url:
                 reply_text += f"📋 *Alyanna's Board:* {alyanna_card_url}\n"
             if l10va_card_url:
