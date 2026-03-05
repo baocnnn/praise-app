@@ -955,7 +955,7 @@ async def handle_task_message(event):
     message_link = f"https://{workspace_domain}.slack.com/archives/{channel_id}/p{timestamp.replace('.', '')}"
 
     # --- Extract tagged Slack user from message ---
-    mentioned_users = re.findall(r"<@(U[A-Z0-9]+)>", original_text)
+    mentioned_users = re.findall(r"<@(U[A-Z0-9]+)>", event.get("text", ""))
     assigned_slack_id = mentioned_users[0] if mentioned_users else None
     assigned_trello_id = SLACK_TO_TRELLO_MEMBER.get(assigned_slack_id) if assigned_slack_id else None
 
@@ -963,7 +963,9 @@ async def handle_task_message(event):
     assigned_name = "Unassigned"
     if assigned_slack_id:
         assigned_user_info = await get_user_info(assigned_slack_id)
+        print(f"🔍 ASSIGNED USER INFO: {assigned_user_info}")  # ADD THIS
         assigned_name = assigned_user_info.get("real_name", "Unassigned")
+        print(f"🔍 ASSIGNED NAME RESULT: {assigned_name}")  # ADD THIS
 
     # --- Get poster's name ---
     poster_info = await get_user_info(user_id)
@@ -1024,7 +1026,7 @@ async def handle_task_message(event):
                 "due": due_date,
             }
             if assigned_trello_id:
-                card_data["idMembers"] = assigned_trello_id
+                card_data["idMembers"] = [assigned_trello_id]
 
             response = await client.post("https://api.trello.com/1/cards", params=card_data)
             l10va_card = response.json()
