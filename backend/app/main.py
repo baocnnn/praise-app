@@ -1,7 +1,8 @@
 import httpx
 import asyncio
 import os
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
@@ -62,8 +63,29 @@ CHANNEL_TO_TRELLO_LIST = {
         "issues": "6386c669750f1a01644412ca"
     },
 }
+# ============== TASK FEATURE - VA MAPPING ==============
+ALYANNA_BOARD_7DAY_LIST = "68c8f0f36f3f26219628f3a6"
+L10VA_BOARD_7DAY_LIST = "6386c669750f1a01644412c7"
+
+SLACK_TO_TRELLO_MEMBER = {
+    "U01FV8EJH5X": "5f5a2ad4ad395a6c4a5f9549",  # Alyanna
+    "U028Z1MMW91": "60fa4c2c92ade57245d67e4b",  # DJ (Desiree)
+    "U070MPN1WG6": "662ceeb35e686be0b33a7f1f",  # May (Menchie)
+    "U038FJ67Q1Z": "623c644e5bc27f7f418b5e82",  # Aryn
+    "U04RSMLR6QY": "63fcd1d7f63be895c0573505",  # Estela
+    "U052CQVKK7F": "64340aac8ddff85487c64171",  # Jorina
+    "U02HT479V9A": "6167a68957befe8a20f8d545",  # Aizel
+    "U03RBQ5DNRF": "62df76044c937e2d2da1435c",  # April
+    "U05QA6H27QV": "64f876f47e37df3293d09913",  # Erika
+    "U04JQU58YHF": "5baf7b9bd776ff36f227125a",  # Junilyn
+    "U026A1SKFMY": "60d94ad9e8b73e22772690d9",  # Jessa
+}
+
+L10VA_CHANNEL_ID = "C05DBULTCPQ"
+MEETINGS_CHANNEL_ID_PIN = "CHRTUSBUN"
 
 processed_events = set()
+
 async def expand_slack_mentions(text, client=None):
     """Convert Slack mentions to readable names (without @ to avoid Trello mentions)"""
     import re
@@ -593,7 +615,7 @@ async def slack_events(request: Request):
 
     message_text = event.get("text", "").upper()
 
-    # Priority order: Task > Announcement > TTA
+    # Existing handlers
     if message_text.startswith("TASK"):
         await handle_task_message(event)
     elif "ANNOUNCEMENT" in message_text or "ANNOUCEMENT" in message_text:
@@ -601,7 +623,8 @@ async def slack_events(request: Request):
     elif message_text.startswith("TTA"):
         await handle_tta_message(event)
 
-        return {"ok": True}
+    # Auto-pin #meetings (runs regardless of keyword)
+    await handle_meetings_pin(event)
 
 
 async def handle_tta_message(event):
@@ -911,6 +934,168 @@ async def handle_task_message(event):
         images=all_images,
         card_type="Task"
     )
+async def handle_task_message(event):
+    # function for task keyword
+    original_text, forwarded_images = await extract_full_message_content(event)
+    user_id = event.get("user")
+    channel_id = event.get("channel")
+    timestamp = event.get("ts")
+
+    # Only process #l10-va
+    if channel_id != L10VA_CHANNEL_ID:
+        return
+
+    workspace_domain = os.getenv("SLACK_WORKSPACE_DOMAIN", "apexdentalstudio")
+    message_link = f"https://{workspace_domain}.slack.com/archives/{channel_id}/p{timestamp.replace('.', '')}"
+
+    # --- Extract tagged Slack user from message ---
+    mentioned_users = re.findall(r"<@(U[A-Z0-9]+)>", original_text)
+    assigned_slack_id = mentioned_users[0] if mentioned_users else None
+    assigned_trello_id = SLACK_TO_TRELLO_MEMBER.get(assigned_slack_id) if assigned_slack_id else None
+
+    # --- Get assigned user's name ---
+    assigned_name = "Unassigned"
+    if assigned_slack_id:
+        assigned_user_info = await get_user_info(assigned_slack_id)
+        assigned_name = assigned_user_info.get("real_name", "Unassigned")
+
+    # --- Get poster's name ---
+    poster_info = await get_user_info(user_id)
+    poster_name = poster_info.get("real_name", "Unknown")
+
+    due_date = (datetime.utcnow() + timedelta(days=7)).strftime("%Y-%m-%dT12:00:00.000Z")
+
+    card_description = (
+        f"**Assigned to:** {assigned_name}\n"
+        f"**Posted by:** {poster_name}\n"
+        f"**Slack message:** {message_link}\n\n"
+        f"---\n\n"
+        f"{original_text}"
+    )
+
+    async with httpx.AsyncClient() as client:
+        # --- 1. Pin the message ---
+        try:
+            await client.post(
+                "https://slack.com/api/pins.add",
+                headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+                json={"channel": channel_id, "timestamp": timestamp}
+            )
+            print(f"📌 Pinned message in {channel_id}")
+        except Exception as e:
+            print(f"❌ Failed to pin message: {e}")
+
+        # --- 2. Create card on Alyanna's board ---
+        alyanna_card_url = None
+        try:
+            card_data = {
+                "key": TRELLO_API_KEY,
+                "token": TRELLO_TOKEN,
+                "idList": ALYANNA_BOARD_7DAY_LIST,
+                "name": f"TASK: {original_text[:80]}",
+                "desc": card_description,
+                "due": due_date,
+            }
+            if assigned_trello_id:
+                card_data["idMembers"] = assigned_trello_id
+
+            response = await client.post("https://api.trello.com/1/cards", params=card_data)
+            alyanna_card = response.json()
+            alyanna_card_url = alyanna_card.get("shortUrl")
+            print(f"✅ Created card on Alyanna's board: {alyanna_card_url}")
+        except Exception as e:
+            print(f"❌ Failed to create Alyanna board card: {e}")
+
+        # --- 3. Create card on L10-VA board ---
+        l10va_card_url = None
+        try:
+            card_data = {
+                "key": TRELLO_API_KEY,
+                "token": TRELLO_TOKEN,
+                "idList": L10VA_BOARD_7DAY_LIST,
+                "name": f"TASK: {original_text[:80]}",
+                "desc": card_description,
+                "due": due_date,
+            }
+            if assigned_trello_id:
+                card_data["idMembers"] = assigned_trello_id
+
+            response = await client.post("https://api.trello.com/1/cards", params=card_data)
+            l10va_card = response.json()
+            l10va_card_url = l10va_card.get("shortUrl")
+            print(f"✅ Created card on L10-VA board: {l10va_card_url}")
+        except Exception as e:
+            print(f"❌ Failed to create L10-VA board card: {e}")
+
+        # --- 4. DM the assigned VA ---
+        if assigned_slack_id:
+            try:
+                dm_response = await client.post(
+                    "https://slack.com/api/conversations.open",
+                    headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+                    json={"users": assigned_slack_id}
+                )
+                dm_channel = dm_response.json()["channel"]["id"]
+
+                dm_text = (
+                    f"👋 Hey {assigned_name}, you've been assigned a new task!\n\n"
+                    f"*Task:* {original_text}\n"
+                    f"*Posted by:* {poster_name}\n"
+                    f"*Due:* 7 days from today\n\n"
+                    f"*Slack message:* {message_link}\n"
+                )
+                if alyanna_card_url:
+                    dm_text += f"*Alyanna's board:* {alyanna_card_url}\n"
+                if l10va_card_url:
+                    dm_text += f"*L10-VA board:* {l10va_card_url}\n"
+
+                await client.post(
+                    "https://slack.com/api/chat.postMessage",
+                    headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+                    json={"channel": dm_channel, "text": dm_text}
+                )
+                print(f"✅ DM sent to {assigned_name}")
+            except Exception as e:
+                print(f"❌ Failed to DM assigned user: {e}")
+
+        # --- 5. Reply in thread with Trello links ---
+        try:
+            reply_text = f"✅ Task created and assigned to {assigned_name}!\n"
+            if alyanna_card_url:
+                reply_text += f"📋 *Alyanna's Board:* {alyanna_card_url}\n"
+            if l10va_card_url:
+                reply_text += f"📋 *L10-VA Board:* {l10va_card_url}\n"
+
+            await client.post(
+                "https://slack.com/api/chat.postMessage",
+                headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+                json={
+                    "channel": channel_id,
+                    "thread_ts": timestamp,
+                    "text": reply_text
+                }
+            )
+            print(f"✅ Thread reply posted with Trello links")
+        except Exception as e:
+            print(f"❌ Failed to post thread reply: {e}")
+async def handle_meetings_pin(event):
+    """Auto-pin every message posted in #meetings"""
+    channel_id = event.get("channel")
+    timestamp = event.get("ts")
+
+    if channel_id != MEETINGS_CHANNEL_ID_PIN:
+        return
+
+    async with httpx.AsyncClient() as client:
+        try:
+            await client.post(
+                "https://slack.com/api/pins.add",
+                headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+                json={"channel": channel_id, "timestamp": timestamp}
+            )
+            print(f"📌 Auto-pinned message in #meetings")
+        except Exception as e:
+            print(f"❌ Failed to auto-pin in #meetings: {e}")
 # ============== TEST ENDPOINT ==============
 
 @app.get("/")
