@@ -937,6 +937,12 @@ async def handle_task_message(event):
 async def handle_task_message(event):
     # function for task keyword
     original_text, forwarded_images = await extract_full_message_content(event)
+
+    # DEBUG - remove after fixing
+    print(f"🔍 RAW EVENT TEXT: {event.get('text', '')}")
+    print(f"🔍 EXTRACTED TEXT: {original_text}")
+    mentioned_users = re.findall(r"<@(U[A-Z0-9]+)>", event.get("text", ""))
+    print(f"🔍 MENTIONED USERS FOUND: {mentioned_users}")
     user_id = event.get("user")
     channel_id = event.get("channel")
     timestamp = event.get("ts")
