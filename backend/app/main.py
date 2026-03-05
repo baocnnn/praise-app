@@ -1003,7 +1003,7 @@ async def handle_task_message(event):
                 "due": due_date,
             }
             if assigned_trello_id:
-                card_data["idMembers"] = assigned_trello_id
+                card_data["idMembers"] = [assigned_trello_id]
 
             response = await client.post("https://api.trello.com/1/cards", params=card_data)
             alyanna_card = response.json()
