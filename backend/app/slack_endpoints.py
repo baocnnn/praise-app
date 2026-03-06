@@ -6,7 +6,7 @@ import time
 from .database import get_db
 from . import models
 from .slack_utils import get_user_by_slack_id, get_slack_user_info, send_slack_message, parse_slack_user_id
-from .slack_config import SLACK_SIGNING_SECRET
+from .config import SLACK_SIGNING_SECRET
 
 router = APIRouter()
 

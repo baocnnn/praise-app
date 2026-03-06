@@ -3,6 +3,7 @@ import os
 # ============== SLACK ==============
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
 SLACK_WORKSPACE_DOMAIN = os.getenv("SLACK_WORKSPACE_DOMAIN", "apexdentalstudio")
+SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET")
 
 # Channel IDs
 MEETINGS_CHANNEL_ID = os.getenv("MEETINGS_CHANNEL_ID")
