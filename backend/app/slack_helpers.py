@@ -1,25 +1,7 @@
 import re
 import httpx
-from datetime import datetime, timedelta
-from .config import (
-    SLACK_BOT_TOKEN,
-    SLACK_WORKSPACE_DOMAIN,
-    CHANNEL_TO_TRELLO_LIST,
-    SLACK_TO_TRELLO_MEMBER,
-    ALYANNA_BOARD_7DAY_LIST,
-    L10VA_BOARD_7DAY_LIST,
-    L10VA_CHANNEL_ID,
-    MEETINGS_CHANNEL_ID_PIN,
-    TRELLO_API_KEY,
-    TRELLO_TOKEN,
-)
+from .config import SLACK_BOT_TOKEN
 from .alerts import send_alert
-from .slack_helpers import (
-    extract_full_message_content,
-    get_channel_name,
-    get_user_info,
-)
-from .trello_helpers import create_trello_card
 
 
 async def handle_tta_message(event):
