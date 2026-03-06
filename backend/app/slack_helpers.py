@@ -4,256 +4,214 @@ from .config import SLACK_BOT_TOKEN
 from .alerts import send_alert
 
 
-async def handle_tta_message(event):
-    """Handle TTA message - create Trello card in appropriate board"""
-    original_text, forwarded_images = await extract_full_message_content(event)
-    user_id = event.get("user")
-    channel_id = event.get("channel")
-    timestamp = event.get("ts")
+async def expand_slack_mentions(text, client=None):
+    """Convert Slack mentions to readable names"""
+    if client is None:
+        client = httpx.AsyncClient()
+        close_client = True
+    else:
+        close_client = False
 
-    channel_name = await get_channel_name(channel_id)
-    user_info = await get_user_info(user_id)
-    user_real_name = user_info.get("real_name", "Unknown User")
+    user_mentions = re.findall(r'<@(U[A-Z0-9]+)>', text)
+    for user_id in user_mentions:
+        try:
+            response = await client.get(
+                "https://slack.com/api/users.info",
+                headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+                params={"user": user_id}
+            )
+            data = response.json()
+            if data.get("ok"):
+                name = data.get("user", {}).get("real_name", user_id)
+                text = text.replace(f"<@{user_id}>", name)
+        except Exception as e:
+            print(f"❌ Error expanding user mention: {e}")
+            await send_alert("expand_slack_mentions", "Failed to expand user mention", {"User ID": user_id, "Error": str(e)})
 
-    message_link = f"https://{SLACK_WORKSPACE_DOMAIN}.slack.com/archives/{channel_id}/p{timestamp.replace('.', '')}"
+    group_mentions = re.findall(r'<!subteam\^([A-Z0-9]+)>', text)
+    if group_mentions:
+        try:
+            response = await client.get(
+                "https://slack.com/api/usergroups.list",
+                headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
+            )
+            data = response.json()
+            if data.get("ok"):
+                usergroups = data.get("usergroups", [])
+                group_lookup = {ug["id"]: ug.get("handle", ug["id"]) for ug in usergroups}
+                for group_id in group_mentions:
+                    if group_id in group_lookup:
+                        handle = group_lookup[group_id]
+                        text = text.replace(f"<!subteam^{group_id}>", handle)
+                        print(f"✅ Replaced usergroup {group_id} with {handle}")
+                    else:
+                        print(f"⚠️ Usergroup {group_id} not found in list")
+            else:
+                print(f"❌ Failed to list usergroups: {data.get('error')}")
+                await send_alert("expand_slack_mentions", "Failed to list usergroups", {"Error": data.get('error')})
+        except Exception as e:
+            print(f"❌ Error expanding usergroup mentions: {e}")
+            await send_alert("expand_slack_mentions", "Exception expanding usergroup mentions", {"Error": str(e)})
 
-    channel_config = CHANNEL_TO_TRELLO_LIST.get(channel_name, {})
-    trello_list_id = channel_config.get("issues")
+    text = text.replace("<!channel>", "channel")
+    text = text.replace("<!here>", "here")
+    text = text.replace("<!everyone>", "everyone")
 
-    if not trello_list_id:
-        print(f"⚠️ No Trello board mapped for channel #{channel_name} - skipping")
-        await send_alert("handle_tta_message", "No Trello board mapped for channel", {"Channel": channel_name})
-        return
+    if close_client:
+        await client.aclose()
 
-    files = event.get("files", [])
-    direct_images = [f for f in files if f.get("mimetype", "").startswith("image/")]
-    all_images = direct_images + forwarded_images
-
-    print(f"📎 Found {len(all_images)} image(s) attached to TTA message")
-
-    await create_trello_card(
-        list_id=trello_list_id,
-        channel_name=channel_name,
-        user_name=user_real_name,
-        message=original_text,
-        slack_link=message_link,
-        images=all_images,
-        card_type="TTA"
-    )
-
-
-async def handle_announcement_message(event):
-    """Handle announcement - create Trello card in announcement list"""
-    original_text, forwarded_images = await extract_full_message_content(event)
-    user_id = event.get("user")
-    channel_id = event.get("channel")
-    timestamp = event.get("ts")
-
-    channel_name = await get_channel_name(channel_id)
-    user_info = await get_user_info(user_id)
-    user_real_name = user_info.get("real_name", "Unknown User")
-
-    message_link = f"https://{SLACK_WORKSPACE_DOMAIN}.slack.com/archives/{channel_id}/p{timestamp.replace('.', '')}"
-
-    channel_config = CHANNEL_TO_TRELLO_LIST.get(channel_name, {})
-    trello_list_id = channel_config.get("announcement")
-
-    if not trello_list_id:
-        print(f"⚠️ No announcement list mapped for channel #{channel_name} - skipping")
-        await send_alert("handle_announcement_message", "No announcement list mapped for channel", {"Channel": channel_name})
-        return
-
-    files = event.get("files", [])
-    direct_images = [f for f in files if f.get("mimetype", "").startswith("image/")]
-    all_images = direct_images + forwarded_images
-
-    print(f"📎 Found {len(all_images)} image(s) attached to announcement")
-
-    await create_trello_card(
-        list_id=trello_list_id,
-        channel_name=channel_name,
-        user_name=user_real_name,
-        message=original_text,
-        slack_link=message_link,
-        images=all_images,
-        card_type="Announcement"
-    )
+    return text
 
 
-async def handle_task_message(event):
-    """Handle TASK keyword in #l10-va - pins, creates Trello cards on two boards, DMs assignees"""
-    original_text, forwarded_images = await extract_full_message_content(event)
-    user_id = event.get("user")
-    channel_id = event.get("channel")
-    timestamp = event.get("ts")
+async def extract_full_message_content(event):
+    """Extract full message text including forwarded content and images"""
+    original_text = event.get("text", "")
+    images_to_attach = []
 
-    # Only process #l10-va
-    if channel_id != L10VA_CHANNEL_ID:
-        return
+    original_text = await expand_slack_mentions(original_text)
 
-    message_link = f"https://{SLACK_WORKSPACE_DOMAIN}.slack.com/archives/{channel_id}/p{timestamp.replace('.', '')}"
-
-    # Extract tagged Slack users from raw text (before mention expansion)
-    mentioned_users = re.findall(r"<@(U[A-Z0-9]+)>", event.get("text", ""))
-    assigned_slack_ids = mentioned_users if mentioned_users else []
-    assigned_trello_ids = [
-        SLACK_TO_TRELLO_MEMBER[uid]
-        for uid in assigned_slack_ids
-        if uid in SLACK_TO_TRELLO_MEMBER
-    ]
-
-    # Get assigned users' names
-    assigned_names = []
-    for uid in assigned_slack_ids:
-        user_info = await get_user_info(uid)
-        name = user_info.get("real_name", "Unknown")
-        assigned_names.append(name)
-
-    assigned_names_str = ", ".join(assigned_names) if assigned_names else "Unassigned"
-
-    # Get poster's name
-    poster_info = await get_user_info(user_id)
-    poster_name = poster_info.get("real_name", "Unknown")
-
-    due_date = (datetime.utcnow() + timedelta(days=7)).strftime("%Y-%m-%dT12:00:00.000Z")
-
-    card_description = (
-        f"**Assigned to:** {assigned_names_str}\n"
-        f"**Posted by:** {poster_name}\n"
-        f"**Slack message:** {message_link}\n\n"
-        f"---\n\n"
-        f"{original_text}"
-    )
+    attachments = event.get("attachments", [])
 
     async with httpx.AsyncClient() as client:
-        # 1. Pin the message
-        try:
-            await client.post(
-                "https://slack.com/api/pins.add",
-                headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
-                json={"channel": channel_id, "timestamp": timestamp}
-            )
-            print(f"📌 Pinned message in {channel_id}")
-        except Exception as e:
-            print(f"❌ Failed to pin message: {e}")
-            await send_alert("handle_task_message", "Failed to pin message", {"Channel": channel_id, "Posted by": poster_name, "Error": str(e)})
+        for attachment in attachments:
+            if attachment.get("is_msg_unfurl") or attachment.get("is_share"):
+                from_channel = attachment.get("channel_id") or attachment.get("from_channel")
+                msg_ts = attachment.get("ts")
 
-        # 2. Create card on Alyanna's board
-        alyanna_card_url = None
-        try:
-            card_data = {
-                "key": TRELLO_API_KEY,
-                "token": TRELLO_TOKEN,
-                "idList": ALYANNA_BOARD_7DAY_LIST,
-                "name": original_text[:80],
-                "desc": card_description,
-                "due": due_date,
-            }
-            if assigned_trello_ids:
-                card_data["idMembers"] = assigned_trello_ids
+                if from_channel and msg_ts:
+                    try:
+                        response = await client.get(
+                            "https://slack.com/api/conversations.history",
+                            headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+                            params={
+                                "channel": from_channel,
+                                "latest": msg_ts,
+                                "inclusive": True,
+                                "limit": 1
+                            }
+                        )
+                        data = response.json()
 
-            response = await client.post("https://api.trello.com/1/cards", params=card_data)
-            alyanna_card = response.json()
-            alyanna_card_url = alyanna_card.get("shortUrl")
-            print(f"✅ Created card on Alyanna's board: {alyanna_card_url}")
-        except Exception as e:
-            print(f"❌ Failed to create Alyanna board card: {e}")
-            await send_alert("handle_task_message", "Failed to create card on Alyanna's board", {"Assigned to": assigned_names_str, "Posted by": poster_name, "Error": str(e)})
+                        if data.get("ok") and data.get("messages"):
+                            shared_msg = data["messages"][0]
+                            shared_text = shared_msg.get("text", "")
+                            shared_text = await expand_slack_mentions(shared_text)
 
-        # 3. Create card on L10-VA board
-        l10va_card_url = None
-        try:
-            card_data = {
-                "key": TRELLO_API_KEY,
-                "token": TRELLO_TOKEN,
-                "idList": L10VA_BOARD_7DAY_LIST,
-                "name": original_text[:80],
-                "desc": card_description,
-                "due": due_date,
-            }
-            if assigned_trello_ids:
-                card_data["idMembers"] = assigned_trello_ids
+                            author_id = shared_msg.get("user")
+                            if author_id:
+                                user_response = await client.get(
+                                    "https://slack.com/api/users.info",
+                                    headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+                                    params={"user": author_id}
+                                )
+                                user_data = user_response.json()
+                                if user_data.get("ok"):
+                                    author_name = user_data.get("user", {}).get("real_name", "Unknown")
+                                    original_text += f"\n\n**Forwarded from {author_name}:**\n{shared_text}"
+                                else:
+                                    original_text += f"\n\n**Forwarded message:**\n{shared_text}"
+                            else:
+                                original_text += f"\n\n**Forwarded message:**\n{shared_text}"
 
-            response = await client.post("https://api.trello.com/1/cards", params=card_data)
-            l10va_card = response.json()
-            l10va_card_url = l10va_card.get("shortUrl")
-            print(f"✅ Created card on L10-VA board: {l10va_card_url}")
-        except Exception as e:
-            print(f"❌ Failed to create L10-VA board card: {e}")
-            await send_alert("handle_task_message", "Failed to create card on L10-VA board", {"Assigned to": assigned_names_str, "Posted by": poster_name, "Error": str(e)})
+                            shared_files = shared_msg.get("files", [])
+                            for file in shared_files:
+                                if file.get("mimetype", "").startswith("image/"):
+                                    images_to_attach.append({
+                                        "url_private": file.get("url_private"),
+                                        "name": file.get("name", "shared_image.jpg"),
+                                        "mimetype": file.get("mimetype", "image/jpeg")
+                                    })
+                    except Exception as e:
+                        print(f"⚠️ Failed to fetch shared message: {e}")
+                        await send_alert("extract_full_message_content", "Failed to fetch shared message", {"Channel": from_channel, "Error": str(e)})
+                        att_text = attachment.get("text", "") or attachment.get("fallback", "")
+                        if att_text:
+                            att_text = await expand_slack_mentions(att_text)
+                            original_text += f"\n\n**Forwarded message:**\n{att_text}"
 
-        # 4. DM all assigned VAs
-        for i, uid in enumerate(assigned_slack_ids):
-            try:
-                name = assigned_names[i] if i < len(assigned_names) else "there"
-                dm_response = await client.post(
-                    "https://slack.com/api/conversations.open",
-                    headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
-                    json={"users": uid}
-                )
-                dm_channel = dm_response.json()["channel"]["id"]
+                if attachment.get("image_url"):
+                    images_to_attach.append({
+                        "url_private": attachment.get("image_url"),
+                        "name": "forwarded_image.jpg",
+                        "mimetype": "image/jpeg"
+                    })
 
-                dm_text = (
-                    f"👋 Hey {name}, you've been assigned a new task!\n\n"
-                    f"*Task:* {original_text}\n"
-                    f"*Posted by:* {poster_name}\n"
-                    f"*Due:* 7 days from today\n\n"
-                    f"*Slack message:* {message_link}\n"
-                )
-                if alyanna_card_url:
-                    dm_text += f"*Alyanna's board:* {alyanna_card_url}\n"
-                if l10va_card_url:
-                    dm_text += f"*L10-VA board:* {l10va_card_url}\n"
+            elif attachment.get("text"):
+                att_text = attachment.get("text", "")
+                att_text = await expand_slack_mentions(att_text)
+                original_text += f"\n\n{att_text}"
 
-                await client.post(
-                    "https://slack.com/api/chat.postMessage",
-                    headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
-                    json={"channel": dm_channel, "text": dm_text}
-                )
-                print(f"✅ DM sent to {name}")
-            except Exception as e:
-                print(f"❌ Failed to DM {uid}: {e}")
-                await send_alert("handle_task_message", "Failed to DM assigned VA", {"VA Slack ID": uid, "Posted by": poster_name, "Error": str(e)})
+                if attachment.get("image_url"):
+                    images_to_attach.append({
+                        "url_private": attachment.get("image_url"),
+                        "name": "attachment_image.jpg",
+                        "mimetype": "image/jpeg"
+                    })
 
-        # 5. Reply in thread with Trello links
-        try:
-            reply_text = f"✅ Task created and assigned to {assigned_names_str}!\n"
-            if alyanna_card_url:
-                reply_text += f"📋 *Alyanna's Board:* {alyanna_card_url}\n"
-            if l10va_card_url:
-                reply_text += f"📋 *L10-VA Board:* {l10va_card_url}\n"
+    files = event.get("files", [])
+    for file in files:
+        if file.get("preview"):
+            original_text += f"\n\n**File preview:**\n{file.get('preview')}"
 
-            await client.post(
-                "https://slack.com/api/chat.postMessage",
-                headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
-                json={
-                    "channel": channel_id,
-                    "thread_ts": timestamp,
-                    "text": reply_text
-                }
-            )
-            print(f"✅ Thread reply posted with Trello links")
-        except Exception as e:
-            print(f"❌ Failed to post thread reply: {e}")
-            await send_alert("handle_task_message", "Failed to post thread reply", {"Channel": channel_id, "Posted by": poster_name, "Error": str(e)})
+    original_text = re.sub(r'<#[A-Z0-9]+\|([^>]+)>', r'#\1', original_text)
+    original_text = re.sub(r'<(https?://[^>]+)>', r'\1', original_text)
+
+    return original_text, images_to_attach
 
 
-async def handle_meetings_pin(event):
-    """Auto-pin every message posted in #meetings"""
-    channel_id = event.get("channel")
-    timestamp = event.get("ts")
-
-    if channel_id != MEETINGS_CHANNEL_ID_PIN:
-        return
-
+async def get_channel_name(channel_id):
+    """Get channel name from ID"""
     async with httpx.AsyncClient() as client:
-        try:
-            await client.post(
-                "https://slack.com/api/pins.add",
-                headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
-                json={"channel": channel_id, "timestamp": timestamp}
-            )
-            print(f"📌 Auto-pinned message in #meetings")
-        except Exception as e:
-            print(f"❌ Failed to auto-pin in #meetings: {e}")
-            await send_alert("handle_meetings_pin", "Failed to auto-pin message in #meetings", {"Error": str(e)})
+        response = await client.get(
+            "https://slack.com/api/conversations.info",
+            headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+            params={"channel": channel_id}
+        )
+        data = response.json()
+
+        if not data.get("ok"):
+            print(f"❌ Failed to get channel info: {data.get('error')} for channel {channel_id}")
+            await send_alert("get_channel_name", "Failed to get channel info", {"Channel ID": channel_id, "Error": data.get('error')})
+            return "unknown-channel"
+
+        return data.get("channel", {}).get("name", "unknown-channel")
+
+
+async def get_user_info(user_id):
+    """Get user details from Slack"""
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            "https://slack.com/api/users.info",
+            headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+            params={"user": user_id}
+        )
+        data = response.json()
+
+        if not data.get("ok"):
+            print(f"❌ Failed to get user info: {data.get('error')} for user {user_id}")
+            await send_alert("get_user_info", "Failed to get user info", {"User ID": user_id, "Error": data.get('error')})
+            return {}
+
+        user_data = data.get("user", {})
+        print(f"✅ Got user info for: {user_data.get('real_name', 'Unknown')}")
+        return user_data
+
+
+async def post_to_slack(channel_id, text=None, blocks=None):
+    """Post message to Slack channel"""
+    async with httpx.AsyncClient() as client:
+        payload = {
+            "channel": channel_id,
+            "unfurl_links": False
+        }
+        if blocks:
+            payload["blocks"] = blocks
+        if text:
+            payload["text"] = text
+
+        response = await client.post(
+            "https://slack.com/api/chat.postMessage",
+            headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+            json=payload
+        )
+        return response.json()
