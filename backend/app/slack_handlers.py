@@ -101,6 +101,8 @@ async def handle_announcement_message(event):
 async def handle_task_message(event):
     """Handle TASK keyword in #l10-va - pins, creates Trello cards on two boards, DMs assignees"""
     original_text, forwarded_images = await extract_full_message_content(event)
+    print(f"🔍 FULL EXTRACTED TEXT: {original_text}")
+    print(f"🔍 FORWARDED IMAGES: {len(forwarded_images)}")
     user_id = event.get("user")
     channel_id = event.get("channel")
     timestamp = event.get("ts")
