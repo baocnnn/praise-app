@@ -99,6 +99,9 @@ async def handle_announcement_message(event):
 
 
 async def handle_task_message(event):
+    # DEBUG
+    import json
+    print(f"🔍 RAW EVENT: {json.dumps(event, indent=2)}")
     """Handle TASK keyword in #l10-va - pins, creates Trello cards on two boards, DMs assignees"""
     original_text, forwarded_images = await extract_full_message_content(event)
     print(f"🔍 FULL EXTRACTED TEXT: {original_text}")
