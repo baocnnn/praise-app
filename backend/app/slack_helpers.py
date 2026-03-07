@@ -121,13 +121,22 @@ async def extract_full_message_content(event):
                                         "name": file.get("name", "shared_image.jpg"),
                                         "mimetype": file.get("mimetype", "image/jpeg")
                                     })
+                        else:
+                        # Channel fetch failed (e.g. DM) - use attachment text directly
+                         att_text = attachment.get("text", "") or attachment.get("fallback", "")
+                        author_name = attachment.get("author_name", "Unknown")
+                        if att_text:
+                            att_text = await expand_slack_mentions(att_text)
+                            original_text += f"\n\n**Forwarded from {author_name}:**\n{att_text}"
+
                     except Exception as e:
                         print(f"⚠️ Failed to fetch shared message: {e}")
                         await send_alert("extract_full_message_content", "Failed to fetch shared message", {"Channel": from_channel, "Error": str(e)})
                         att_text = attachment.get("text", "") or attachment.get("fallback", "")
+                        author_name = attachment.get("author_name", "Unknown")
                         if att_text:
                             att_text = await expand_slack_mentions(att_text)
-                            original_text += f"\n\n**Forwarded message:**\n{att_text}"
+                            original_text += f"\n\n**Forwarded from {author_name}:**\n{att_text}"
 
                 if attachment.get("image_url"):
                     images_to_attach.append({
