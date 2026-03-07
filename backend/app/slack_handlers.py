@@ -99,13 +99,9 @@ async def handle_announcement_message(event):
 
 
 async def handle_task_message(event):
-    # DEBUG
-    import json
-    print(f"🔍 RAW EVENT: {json.dumps(event, indent=2)}")
     """Handle TASK keyword in #l10-va - pins, creates Trello cards on two boards, DMs assignees"""
     original_text, forwarded_images = await extract_full_message_content(event)
-    print(f"🔍 FULL EXTRACTED TEXT: {original_text}")
-    print(f"🔍 FORWARDED IMAGES: {len(forwarded_images)}")
+    raw_text = event.get("text", "")
     user_id = event.get("user")
     channel_id = event.get("channel")
     timestamp = event.get("ts")
@@ -168,7 +164,7 @@ async def handle_task_message(event):
                 "key": TRELLO_API_KEY,
                 "token": TRELLO_TOKEN,
                 "idList": ALYANNA_BOARD_7DAY_LIST,
-                "name": original_text[:80],
+                "name": raw_text[:80],
                 "desc": card_description,
                 "due": due_date,
             }
@@ -190,7 +186,7 @@ async def handle_task_message(event):
                 "key": TRELLO_API_KEY,
                 "token": TRELLO_TOKEN,
                 "idList": L10VA_BOARD_7DAY_LIST,
-                "name": original_text[:80],
+                "name": raw_text[:80],
                 "desc": card_description,
                 "due": due_date,
             }
